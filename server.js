@@ -33,6 +33,13 @@ function findUserByEmail(email) {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Railway (and most hosts) put the app behind a reverse proxy that
+// terminates HTTPS. Without this, Express can't tell the connection is
+// actually secure, so express-session silently fails to persist the
+// login cookie — this is what was causing "login succeeds but /api/me
+// still says unauthorized".
+app.set('trust proxy', 1);
+
 app.use(session({
   // IMPORTANT: change this secret before deploying for real.
   secret: process.env.SESSION_SECRET || 'change-this-secret-before-deploying',
