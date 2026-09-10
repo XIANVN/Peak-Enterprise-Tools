@@ -6,7 +6,11 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, 'users.json');
+// Uses the persistent volume mounted at /app/data on Railway so accounts and
+// API keys survive redeploys. Falls back to a local folder for running this
+// on your own machine, where there's no Railway volume.
+const DATA_DIR = fs.existsSync('/app/data') ? '/app/data' : __dirname;
+const DB_FILE = path.join(DATA_DIR, 'users.json');
 
 // ---------- Tiny JSON file "database" ----------
 // Fine for small numbers of users. For bigger scale, swap this out for a
@@ -61,9 +65,9 @@ function requireLogin(req, res, next) {
 // ---------- Auth routes ----------
 
 app.post('/api/register', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required.' });
+  const { email, password, username } = req.body;
+  if (!email || !password || !username) {
+    return res.status(400).json({ error: 'Username, email, and password are required.' });
   }
   if (password.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters.' });
@@ -73,10 +77,10 @@ app.post('/api/register', async (req, res) => {
     return res.status(400).json({ error: 'An account with that email already exists.' });
   }
   const passwordHash = await bcrypt.hash(password, 10);
-  users.push({ email, passwordHash, apiKey: '' });
+  users.push({ email, username, passwordHash, apiKey: '', avatar: '' });
   saveUsers(users);
   req.session.userEmail = email;
-  res.json({ email });
+  res.json({ email, username });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -93,7 +97,7 @@ app.post('/api/login', async (req, res) => {
     return res.status(400).json({ error: 'Incorrect email or password.' });
   }
   req.session.userEmail = user.email;
-  res.json({ email: user.email });
+  res.json({ email: user.email, username: user.username });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -103,10 +107,65 @@ app.post('/api/logout', (req, res) => {
 app.get('/api/me', requireLogin, (req, res) => {
   const user = findUserByEmail(req.session.userEmail);
   if (!user) return res.status(401).json({ error: 'Not logged in.' });
-  res.json({ email: user.email, hasApiKey: Boolean(user.apiKey) });
+  res.json({
+    email: user.email,
+    username: user.username || user.email.split('@')[0],
+    avatar: user.avatar || '',
+    hasApiKey: Boolean(user.apiKey)
+  });
 });
 
-// ---------- API key settings ----------
+// ---------- Account settings ----------
+
+app.post('/api/settings/username', requireLogin, (req, res) => {
+  const { username } = req.body;
+  if (!username || !username.trim()) {
+    return res.status(400).json({ error: 'Username cannot be empty.' });
+  }
+  const users = loadUsers();
+  const user = users.find(u => u.email.toLowerCase() === req.session.userEmail.toLowerCase());
+  if (!user) return res.status(401).json({ error: 'Not logged in.' });
+  user.username = username.trim();
+  saveUsers(users);
+  res.json({ ok: true, username: user.username });
+});
+
+app.post('/api/settings/avatar', requireLogin, (req, res) => {
+  const { avatar } = req.body;
+  if (!avatar) {
+    return res.status(400).json({ error: 'No image provided.' });
+  }
+  // Rough size guard since this is stored as a base64 string in a JSON file.
+  if (avatar.length > 900000) {
+    return res.status(400).json({ error: 'Image is too large. Try a smaller picture.' });
+  }
+  const users = loadUsers();
+  const user = users.find(u => u.email.toLowerCase() === req.session.userEmail.toLowerCase());
+  if (!user) return res.status(401).json({ error: 'Not logged in.' });
+  user.avatar = avatar;
+  saveUsers(users);
+  res.json({ ok: true });
+});
+
+app.post('/api/settings/password', requireLogin, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current and new password are required.' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  const users = loadUsers();
+  const user = users.find(u => u.email.toLowerCase() === req.session.userEmail.toLowerCase());
+  if (!user) return res.status(401).json({ error: 'Not logged in.' });
+  const match = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!match) {
+    return res.status(400).json({ error: 'Current password is incorrect.' });
+  }
+  user.passwordHash = await bcrypt.hash(newPassword, 10);
+  saveUsers(users);
+  res.json({ ok: true });
+});
 
 app.post('/api/settings/api-key', requireLogin, (req, res) => {
   const { apiKey } = req.body;
