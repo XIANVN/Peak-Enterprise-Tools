@@ -1,0 +1,14 @@
+{
+  "name": "botcake-spiel-generator",
+  "version": "1.0.0",
+  "description": "Multi-user BotCake follow-up spiel generator with email login and per-user Anthropic API keys.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "bcryptjs": "^2.4.3"
+  }
+}
